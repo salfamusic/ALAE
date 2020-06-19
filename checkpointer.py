@@ -82,7 +82,6 @@ class Checkpointer(object):
             return {}
         if file_name is not None:
             f = file_name
-        import pdb; pdb.set_trace()
         self.logger.info("Loading checkpoint from {}".format(f))
         checkpoint = torch.load(f, map_location=torch.device("cpu"))
         for name, model in self.models.items():

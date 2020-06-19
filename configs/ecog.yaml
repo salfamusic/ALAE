@@ -14,7 +14,9 @@ DATASET:
 
   SAMPLES_PATH: ''
   STYLE_MIX_PATH: style_mixing/test_images/set_ecog
-  SPEC_CHANS: 128
+  SPEC_CHANS: 64
+  TEMPORAL_SAMPLES: 128
+  BCTS: True
   MAX_RESOLUTION_LEVEL: 7
 MODEL:
   LATENT_SPACE_SIZE: 128
@@ -25,33 +27,39 @@ MODEL:
   MAPPING_LAYERS: 8
   TRUNCATIOM_CUTOFF: 5
   CHANNELS: 1
-
   UNIQ_WORDS: 50
-  #####PRE-TAKE OFF CHECKLIST!!!!!########
+  #####TAKE OFF CHECKLIST!!!########
   AVERAGE_W: False
   TEMPORAL_W: False
   RESIDUAL: True
   W_CLASSIFIER: False
-  #             4      8      16    32    64    128 
-  # ATTENTION: [False, False, False, True, True, False]
-  ATTENTION: []
-OUTPUT_DIR: training_artifacts/ecog_residual_lgbs
+  CYCLE: True
+  ATTENTIONAL_STYLE: True
+  #T            4      8      16    32    64    128 
+  ATTENTION: [False, False, False, False, True, True]
+  HEADS: 4
+  # ATTENTION: []
+OUTPUT_DIR: training_artifacts/ecog_residual_cycle_attention3264wStyleIN_specchan64_more_attentfeatures_heads4
 #####################################
 
 TRAIN:
+  W_WEIGHT: 1
+  CYCLE_WEIGHT: 1
   BASE_LEARNING_RATE: 0.002
   EPOCHS_PER_LOD: 16
   LEARNING_DECAY_RATE: 0.1
-  LEARNING_DECAY_STEPS: []
-  TRAIN_EPOCHS: 250
+  LEARNING_DECAY_STEPS: [96]
+  TRAIN_EPOCHS: 112
   #                    4    8   16    32    64    128    256
   LOD_2_BATCH_8GPU: [512, 256, 128,   64,   32,    32] # If GPU memory ~16GB reduce last number from 32 to 24
-  LOD_2_BATCH_4GPU: [512, 256, 128,   64,   32,    32]
-  LOD_2_BATCH_2GPU: [512, 256, 128,   64,   32,    32]
+  LOD_2_BATCH_4GPU: [64, 64, 64,   64,   32,    16]
+  LOD_2_BATCH_2GPU: [64, 64, 64,   64,   32,    8]
   # LOD_2_BATCH_1GPU: [512, 256, 128,   64,   32,    16]
   # LOD_2_BATCH_1GPU: [512, 256, 128,   64,   32,    32]
-  LOD_2_BATCH_1GPU: [512, 256, 128,   64,   32,    16]
-  # LOD_2_BATCH_1GPU: [64, 64, 64,   64,   32,    16]
+  # LOD_2_BATCH_1GPU: [512, 256, 128,   64,   32,    16]
+  # LOD_2_BATCH_1GPU: [128, 128, 128,   128,   64,    32]
+  # LOD_2_BATCH_1GPU: [512, 256, 256,   128,   64,    16]
+  LOD_2_BATCH_1GPU: [64, 64, 64,   64,   32,    16]
 
   LEARNING_RATES: [0.0015,  0.0015,   0.0015,    0.002,     0.003,    0.003]
   # LEARNING_RATES: [0.0015,  0.0015,   0.0005,    0.0003,     0.0003,    0.0002]

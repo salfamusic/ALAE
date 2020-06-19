@@ -89,7 +89,7 @@ class Linear(nn.Module):
 class Conv2d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, output_padding=0, dilation=1,
                  groups=1, bias=True, gain=np.sqrt(2.0), transpose=False, transform_kernel=False, lrmul=1.0,
-                 implicit_lreq=use_implicit_lreq):
+                 implicit_lreq=use_implicit_lreq,initial_weight=None):
         super(Conv2d, self).__init__()
         if in_channels % groups != 0:
             raise ValueError('in_channels must be divisible by groups')
@@ -108,6 +108,7 @@ class Conv2d(nn.Module):
         self.transpose = transpose
         self.fan_in = np.prod(self.kernel_size) * in_channels // groups
         self.transform_kernel = transform_kernel
+        self.initial_weight = initial_weight
         if transpose:
             self.weight = Parameter(torch.Tensor(in_channels, out_channels // groups, *self.kernel_size))
         else:
@@ -125,7 +126,10 @@ class Conv2d(nn.Module):
         if not self.implicit_lreq:
             init.normal_(self.weight, mean=0, std=1.0 / self.lrmul)
         else:
-            init.normal_(self.weight, mean=0, std=self.std / self.lrmul)
+            if self.initial_weight:
+                self.weight = self.initial_weight
+            else:
+                init.normal_(self.weight, mean=0, std=self.std / self.lrmul)
             setattr(self.weight, 'lr_equalization_coef', self.std)
             if self.bias is not None:
                 setattr(self.bias, 'lr_equalization_coef', self.lrmul)

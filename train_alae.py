@@ -31,6 +31,7 @@ from launcher import run
 from defaults import get_cfg_defaults
 import lod_driver
 from PIL import Image
+import numpy as np
 
 def save_sample(lod2batch, tracker, sample, samplez, x, logger, model, cfg, encoder_optimizer, decoder_optimizer):
     os.makedirs('results', exist_ok=True)
@@ -39,46 +40,59 @@ def save_sample(lod2batch, tracker, sample, samplez, x, logger, model, cfg, enco
         lod2batch.get_blend_factor(),
         encoder_optimizer.param_groups[0]['lr'], decoder_optimizer.param_groups[0]['lr'],
         torch.cuda.max_memory_allocated() / 1024.0 / 1024.0))
-
+    # sample = sample.transpose(-2,-1)
     with torch.no_grad():
         model.eval()
         # sample = sample[:lod2batch.get_per_GPU_batch_size()]
         # samplez = samplez[:lod2batch.get_per_GPU_batch_size()]
 
         needed_resolution = model.decoder.layer_to_resolution[lod2batch.lod]
-        sample_in = sample
-        while sample_in.shape[2] > needed_resolution:
-            sample_in = F.avg_pool2d(sample_in, 2, 2)
-        assert sample_in.shape[2] == needed_resolution
+        sample_in_all = torch.tensor([])
+        rec1_all = torch.tensor([])
+        rec2_all = torch.tensor([])
+        g_rec_all = torch.tensor([])
+        for i in range(0,sample.shape[0],9):
+            sample_in = sample[i:np.minimum(i+9,sample.shape[0])]
+            x_in = x[i:np.minimum(i+9,sample.shape[0])]
+            samplez_in = samplez[i:np.minimum(i+9,sample.shape[0])]
+            while sample_in.shape[2] > needed_resolution:
+                sample_in = F.avg_pool2d(sample_in, 2, 2)
+            assert sample_in.shape[2] == needed_resolution
 
-        blend_factor = lod2batch.get_blend_factor()
-        if lod2batch.in_transition:
-            needed_resolution_prev = model.decoder.layer_to_resolution[lod2batch.lod - 1]
-            sample_in_prev = F.avg_pool2d(sample_in, 2, 2)
-            sample_in_prev_2x = F.interpolate(sample_in_prev, needed_resolution)
-            sample_in = sample_in * blend_factor + sample_in_prev_2x * (1.0 - blend_factor)
+            blend_factor = lod2batch.get_blend_factor()
+            if lod2batch.in_transition:
+                needed_resolution_prev = model.decoder.layer_to_resolution[lod2batch.lod - 1]
+                sample_in_prev = F.avg_pool2d(sample_in, 2, 2)
+                sample_in_prev_2x = F.interpolate(sample_in_prev, scale_factor=2)
+                sample_in = sample_in * blend_factor + sample_in_prev_2x * (1.0 - blend_factor)
 
-        Z, _ = model.encode(sample_in, lod2batch.lod, blend_factor)
+            Z, _ = model.encode(sample_in, lod2batch.lod, blend_factor)
 
-        if cfg.MODEL.Z_REGRESSION:
-            Z = model.mapping_fl(Z[:, 0])
-        else:
-            if cfg.MODEL.TEMPORAL_W:
-                Z = Z.repeat(1, model.mapping_fl.num_layers, 1,1)
+            if cfg.MODEL.Z_REGRESSION:
+                Z = model.mapping_fl(Z[:, 0])
             else:
-                Z = Z.repeat(1, model.mapping_fl.num_layers, 1)
+                if cfg.MODEL.TEMPORAL_W:
+                    Z = Z.repeat(1, model.mapping_fl.num_layers, 1,1)
+                else:
+                    Z = Z.repeat(1, model.mapping_fl.num_layers, 1)
 
-        rec1 = model.decoder(Z, lod2batch.lod, blend_factor, noise=False)
-        rec2 = model.decoder(Z, lod2batch.lod, blend_factor, noise=True)
+            rec1 = model.decoder(Z, lod2batch.lod, blend_factor, noise=False)
+            rec2 = model.decoder(Z, lod2batch.lod, blend_factor, noise=True)
 
-        # rec1 = F.interpolate(rec1, sample.shape[2])
-        # rec2 = F.interpolate(rec2, sample.shape[2])
-        # sample_in = F.interpolate(sample_in, sample.shape[2])
+            # rec1 = F.interpolate(rec1, sample.shape[2])
+            # rec2 = F.interpolate(rec2, sample.shape[2])
+            # sample_in = F.interpolate(sample_in, sample.shape[2])
 
-        Z = model.mapping_fl(samplez)
-        g_rec = model.decoder(Z, lod2batch.lod, blend_factor, noise=True)
-        # g_rec = F.interpolate(g_rec, sample.shape[2])
-        resultsample = torch.cat([sample_in, rec1, rec2, g_rec], dim=0)
+            Z = model.mapping_fl(samplez_in)
+            g_rec = model.decoder(Z, lod2batch.lod, blend_factor, noise=True)
+            # g_rec = F.interpolate(g_rec, sample.shape[2])
+            sample_in_all = torch.cat([sample_in_all,sample_in],dim=0)
+            rec1_all = torch.cat([rec1_all,rec1],dim=0)
+            rec2_all = torch.cat([rec2_all,rec2],dim=0)
+            g_rec_all = torch.cat([g_rec_all,g_rec],dim=0)
+        resultsample = torch.cat([sample_in_all, rec1_all, rec2_all, g_rec_all], dim=0)
+        if cfg.DATASET.BCTS:
+            resultsample = resultsample.transpose(-2,-1)
 
         @utils.async_func
         def save_pic(x_rec):
@@ -115,11 +129,18 @@ def train(cfg, logger, local_rank, world_size, distributed):
         z_regression=cfg.MODEL.Z_REGRESSION,
         average_w = cfg.MODEL.AVERAGE_W,
         temporal_w = cfg.MODEL.TEMPORAL_W,
+        spec_chans = cfg.DATASET.SPEC_CHANS,
+        temporal_samples = cfg.DATASET.TEMPORAL_SAMPLES,
         init_zeros = cfg.MODEL.TEMPORAL_W,
         residual = cfg.MODEL.RESIDUAL,
         w_classifier = cfg.MODEL.W_CLASSIFIER,
         uniq_words = cfg.MODEL.UNIQ_WORDS,
         attention = cfg.MODEL.ATTENTION,
+        cycle = cfg.MODEL.CYCLE,
+        w_weight = cfg.TRAIN.W_WEIGHT,
+        cycle_weight=cfg.TRAIN.CYCLE_WEIGHT,
+        attentional_style=cfg.MODEL.ATTENTIONAL_STYLE,
+        heads = cfg.MODEL.HEADS,
     )
     model.cuda(local_rank)
     model.train()
@@ -139,12 +160,18 @@ def train(cfg, logger, local_rank, world_size, distributed):
             z_regression=cfg.MODEL.Z_REGRESSION,
             average_w = cfg.MODEL.AVERAGE_W,
             spec_chans = cfg.DATASET.SPEC_CHANS,
+            temporal_samples = cfg.DATASET.TEMPORAL_SAMPLES,
             temporal_w = cfg.MODEL.TEMPORAL_W,
             init_zeros = cfg.MODEL.TEMPORAL_W,
             residual = cfg.MODEL.RESIDUAL,
             w_classifier = cfg.MODEL.W_CLASSIFIER,
             uniq_words = cfg.MODEL.UNIQ_WORDS,
             attention = cfg.MODEL.ATTENTION,
+            cycle = cfg.MODEL.CYCLE,
+            w_weight = cfg.TRAIN.W_WEIGHT,
+            cycle_weight=cfg.TRAIN.CYCLE_WEIGHT,
+            attentional_style=cfg.MODEL.ATTENTIONAL_STYLE,
+            heads = cfg.MODEL.HEADS,
         )
         model_s.cuda(local_rank)
         model_s.eval()
@@ -211,7 +238,6 @@ def train(cfg, logger, local_rank, world_size, distributed):
                                  milestones=cfg.TRAIN.LEARNING_DECAY_STEPS,
                                  gamma=cfg.TRAIN.LEARNING_DECAY_RATE,
                                  reference_batch_size=32, base_lr=cfg.TRAIN.LEARNING_RATES)
-
     model_dict = {
         'discriminator': encoder,
         'generator': decoder,
@@ -238,7 +264,7 @@ def train(cfg, logger, local_rank, world_size, distributed):
                                 logger=logger,
                                 save=local_rank == 0)
 
-    extra_checkpoint_data = checkpointer.load(ignore_last_checkpoint=True)
+    extra_checkpoint_data = checkpointer.load(ignore_last_checkpoint=True,file_name='./training_artifacts/ecog_residual_cycle_attention3264wIN_specchan64_more_attentfeatures_fixINencoderwithaffineture/model_tmp_lod3.pth')
     logger.info("Starting from epoch: %d" % (scheduler.start_epoch()))
 
     arguments.update(extra_checkpoint_data)
@@ -250,7 +276,7 @@ def train(cfg, logger, local_rank, world_size, distributed):
     dataset = TFRecordsDataset(cfg, logger, rank=local_rank, world_size=world_size, buffer_size_mb=1024, channels=cfg.MODEL.CHANNELS,param=param)
     dataset_test = TFRecordsDataset(cfg, logger, rank=local_rank, world_size=world_size, buffer_size_mb=1024, channels=cfg.MODEL.CHANNELS,train=False,param=param)
 
-    rnd = np.random.RandomState(1234)
+    rnd = np.random.RandomState(3456)
     latents = rnd.randn(len(dataset_test.dataset), cfg.MODEL.LATENT_SPACE_SIZE)
     samplez = torch.tensor(latents).float().cuda()
 
@@ -315,17 +341,15 @@ def train(cfg, logger, local_rank, world_size, distributed):
                 # if need_permute:
                 #     x_orig = x_orig.permute(0, 3, 1, 2)
                 # x_orig = (x_orig / 127.5 - 1.)
-                x_orig = F.avg_pool2d(x_orig,x_orig.shape[-1]//2**lod2batch.get_lod_power2(),x_orig.shape[-1]//2**lod2batch.get_lod_power2())
+                x_orig = F.avg_pool2d(x_orig,x_orig.shape[-2]//2**lod2batch.get_lod_power2(),x_orig.shape[-2]//2**lod2batch.get_lod_power2())
                 # x_orig = F.interpolate(x_orig, [x_orig.shape[-1]//2**lod2batch.get_lod_power2(),x_orig.shape[-1]//2**lod2batch.get_lod_power2()],mode='bilinear',align_corners=False)
                 blend_factor = lod2batch.get_blend_factor()
-
                 needed_resolution = layer_to_resolution[lod2batch.lod]
                 x = x_orig
-
                 if lod2batch.in_transition:
                     needed_resolution_prev = layer_to_resolution[lod2batch.lod - 1]
                     x_prev = F.avg_pool2d(x_orig, 2, 2)
-                    x_prev_2x = F.interpolate(x_prev, needed_resolution)
+                    x_prev_2x = F.interpolate(x_prev, scale_factor=2)
                     # x_prev_2x = F.interpolate(x_prev, needed_resolution,mode='bilinear',align_corners=False)
                     x = x * blend_factor + x_prev_2x * (1.0 - blend_factor)
 
@@ -350,9 +374,14 @@ def train(cfg, logger, local_rank, world_size, distributed):
 
             encoder_optimizer.zero_grad()
             decoder_optimizer.zero_grad()
-            lae = model(x, lod2batch.lod, blend_factor, d_train=True, ae=True)
-            tracker.update(dict(lae=lae))
-            (lae).backward()
+            if cfg.MODEL.CYCLE:
+                lae,lcycle = model(x, lod2batch.lod, blend_factor, d_train=True, ae=True)
+                tracker.update(dict(lae=lae,lcycle=lcycle))
+                (lae+lcycle).backward()
+            else:
+                lae = model(x, lod2batch.lod, blend_factor, d_train=True, ae=True)
+                tracker.update(dict(lae=lae))
+                (lae).backward()
             encoder_optimizer.step()
             decoder_optimizer.step()
 

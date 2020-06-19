@@ -26,6 +26,10 @@ import math
 from ECoGDataSet import ECoGDataset
 cpu = torch.device('cpu')
 
+# class myDataLoader(torch.utils.data.DataLoader):
+#     def __init__(self,dataset,batch_size, shuffle,drop_last):
+#         super(myDataLoader).__init__()
+
 
 class TFRecordsDataset:
     def __init__(self, cfg, logger, rank=0, world_size=1, buffer_size_mb=200, channels=3, seed=None, train=True, needs_labels=False,param=None):
@@ -78,6 +82,11 @@ class TFRecordsDataset:
     def reset(self, lod, batch_size):
         assert lod in self.filenames.keys()
         self.current_filenames = self.filenames[lod]
+        if batch_size!=self.batch_size:
+            self.iterator = torch.utils.data.DataLoader(self.dataset,
+                                               batch_size=batch_size,
+                                               shuffle=True if self.train else False,
+                                               drop_last=True if self.train else False)
         self.batch_size = batch_size
         self.dataset.current_lod=lod
 

@@ -20,10 +20,10 @@ import numpy as np
 
 
 class DLatent(nn.Module):
-    def __init__(self, dlatent_size, layer_count,temporal_w=False):
+    def __init__(self, dlatent_size, layer_count,temporal_w=False,temporal_samples=128):
         super(DLatent, self).__init__()
         if temporal_w:
-            buffer = torch.zeros(layer_count, dlatent_size, 128, dtype=torch.float32)
+            buffer = torch.zeros(layer_count, dlatent_size, temporal_samples, dtype=torch.float32)
         else:
             buffer = torch.zeros(layer_count, dlatent_size, dtype=torch.float32)
         self.register_buffer('buff', buffer)
@@ -31,14 +31,18 @@ class DLatent(nn.Module):
 
 class Model(nn.Module):
     def __init__(self, startf=32, maxf=256, layer_count=3, latent_size=128, uniq_words=50, mapping_layers=5, dlatent_avg_beta=None,
-                 truncation_psi=None, truncation_cutoff=None, style_mixing_prob=None, channels=3, generator="",
-                 encoder="", z_regression=False,average_w=False,temporal_w=False,init_zeros=False,spec_chans=128,residual=False,w_classifier=False,attention=None):
+                 truncation_psi=None, truncation_cutoff=None, style_mixing_prob=None, channels=3, generator="", encoder="", 
+                 z_regression=False,average_w=False,spec_chans = 128,temporal_samples=128,temporal_w=False, init_zeros=False,
+                 residual=False,w_classifier=False,attention=None,cycle=None,w_weight=1.0,cycle_weight=1.0, attentional_style=False,heads=1):
         super(Model, self).__init__()
 
         self.layer_count = layer_count
         self.z_regression = z_regression
         self.temporal_w = temporal_w
         self.w_classifier = w_classifier
+        self.cycle = cycle
+        self.w_weight=w_weight
+        self.cycle_weight=cycle_weight
 
         self.mapping_tl = MAPPINGS["MappingToLatent"](
             latent_size=latent_size,
@@ -67,11 +71,15 @@ class Model(nn.Module):
             layer_count=layer_count,
             maxf=maxf,
             latent_size=latent_size,
-            channels=channels,spec_chans=spec_chans,
+            channels=channels,
+            spec_chans=spec_chans, temporal_samples = temporal_samples,
             temporal_w = temporal_w,
             init_zeros = init_zeros,
             residual = residual,
-            attention=attention,)
+            attention=attention,
+            attentional_style=attentional_style,
+            heads = heads,
+            )
 
         self.encoder = ENCODERS[encoder](
             startf=startf,
@@ -79,10 +87,14 @@ class Model(nn.Module):
             maxf=maxf,
             latent_size=latent_size,
             channels=channels,
+            spec_chans=spec_chans, temporal_samples = temporal_samples,
             average_w=average_w,
             temporal_w = temporal_w,
             residual = residual,
-            attention=attention,)
+            attention=attention,
+            attentional_style=attentional_style,
+            heads = heads,
+            )
 
         self.dlatent_avg = DLatent(latent_size, self.mapping_fl.num_layers,temporal_w=temporal_w)
         self.latent_size = latent_size
@@ -162,16 +174,25 @@ class Model(nn.Module):
             z = torch.randn(x.shape[0], self.latent_size)
             s, rec = self.generate(lod, blend_factor, z=z, mixing=False, noise=True, return_styles=True)
             
-            Z, d_result_real = self.encode(rec, lod, blend_factor)
+            Z, _ = self.encode(rec, lod, blend_factor)
             
+            if self.cycle:
+                Z_real, _ = self.encode(x, lod, blend_factor)
+                Z_real = Z_real.repeat(1, self.mapping_fl.num_layers, 1)
+                rec = self.decoder.forward(Z_real, lod, blend_factor, noise=True)
+                Lcycle = self.cycle_weight*torch.mean((rec.detach() - x.detach()).abs())
+                
             assert Z.shape == s.shape
 
             if self.z_regression:
-                Lae = torch.mean(((Z[:, 0] - z)**2))
+                Lae = self.w_weight*torch.mean(((Z[:, 0] - z)**2))
             else:
-                Lae = torch.mean(((Z - s.detach())**2))
+                Lae = self.w_weight*torch.mean(((Z - s.detach())**2))
 
-            return Lae
+            if self.cycle:
+                return Lae,Lcycle
+            else:
+                return Lae
 
         elif d_train:
             with torch.no_grad():
@@ -183,7 +204,7 @@ class Model(nn.Module):
                 _, d_result_real, word_logits = self.encode(x, lod, blend_factor,word_classify=True)
             else:
                 _, d_result_real = self.encode(x, lod, blend_factor)
-            _, d_result_fake = self.encode(Xp.detach(), lod, blend_factor)
+                _, d_result_fake = self.encode(Xp.detach(), lod, blend_factor)
 
             loss_d = losses.discriminator_logistic_simple_gp(d_result_fake, d_result_real, x)
             if self.w_classifier:

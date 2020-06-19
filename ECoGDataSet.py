@@ -8,7 +8,10 @@ import h5py
 import random
 import pandas
 from torch.utils.data import Dataset
-
+from defaults import get_cfg_defaults
+cfg = get_cfg_defaults()
+cfg.merge_from_file('configs/ecog.yaml')
+BCTS = cfg.DATASET.BCTS
 
 class ECoGDataset(Dataset):
     """docstring for ECoGDataset"""
@@ -102,12 +105,14 @@ class ECoGDataset(Dataset):
                 region_ind = np.delete(np.arange(regions.shape[0]),region_ind)
             region_ind = region_ind.astype(np.int64)
             return ecog[:,region_ind],regions[region_ind],mask[region_ind],mni_coord[region_ind]
-    def __init__(self, ReqSubjDict, mode = 'train', train_param = None):
+    def __init__(self, ReqSubjDict, mode = 'train', train_param = None,BCTS=None):
         """ ReqSubjDict can be a list of multiple subjects"""
         super(ECoGDataset, self).__init__()
         self.current_lod=2
         self.ReqSubjDict = ReqSubjDict
         self.mode = mode
+        self.BCTS = BCTS
+        self.SpecBands = cfg.DATASET.SPEC_CHANS
         with open('AllSubjectInfo.json','r') as rfile:
             allsubj_param = json.load(rfile)
         if (train_param == None):
@@ -129,8 +134,7 @@ class ECoGDataset(Dataset):
         [self.SelectRegion.extend(self.cortex[area]) for area in train_param["SelectRegion"]]
         self.BlockRegion = []
         [self.BlockRegion.extend(self.cortex[area]) for area in train_param["BlockRegion"]]
-        self.Prod,self.SpecBands,self.UseGridOnly,self.ReshapeAsGrid,self.SeqLen = train_param['Prod'],\
-                                                                    train_param['SpecBands'],\
+        self.Prod,self.UseGridOnly,self.ReshapeAsGrid,self.SeqLen = train_param['Prod'],\
                                                                     train_param['UseGridOnly'],\
                                                                     train_param['ReshapeAsGrid'],\
                                                                     train_param['SeqLen'],
@@ -737,11 +741,12 @@ class ECoGDataset(Dataset):
             
             mni_batch = self.meta_data['mni_coordinate_alldateset'][i]
             # ecog_batch = ecog_batch[np.newaxis,:,:]
-            spkr_batch = np.transpose(spkr_batch,[1,0])
             # mni_batch = np.transpose(mni_batch,[1,0])
-            if self.Prod:
-                # ecog_batch_re = ecog_batch_re[np.newaxis,:,:]
-                spkr_batch_re = np.transpose(spkr_batch_re,[1,0])
+            if not BCTS:
+                spkr_batch = np.transpose(spkr_batch,[1,0])
+                if self.Prod:
+                    # ecog_batch_re = ecog_batch_re[np.newaxis,:,:]
+                    spkr_batch_re = np.transpose(spkr_batch_re,[1,0])
 
 
             ecog_batch_all += [ecog_batch]

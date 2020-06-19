@@ -1,6 +1,6 @@
 {
 	"Prod":true,
-	"SpecBands":128,
+	"SpecBands":64,
 	"SelectRegion":["AUDITORY","BROCA","MOTO","SENSORY"],
 	"BlockRegion":[],
 	"UseGridOnly":true,

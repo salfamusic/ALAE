@@ -38,12 +38,15 @@ def pixel_norm(x, epsilon=1e-8):
     return x * torch.rsqrt(torch.mean(x.pow(2.0), dim=1, keepdim=True) + epsilon)
 
 
-def style_mod(x, style):
+def style_mod(x, style, bias = True):
     if style.dim()==2:
         style = style.view(style.shape[0], 2, x.shape[1], 1, 1)
     elif style.dim()==3:
         style = style.view(style.shape[0], 2, x.shape[1], style.shape[2], 1)
-    return torch.addcmul(style[:, 1], value=1.0, tensor1=x, tensor2=style[:, 0] + 1)
+    if bias:
+        return torch.addcmul(style[:, 1], value=1.0, tensor1=x, tensor2=style[:, 0] + 1)
+    else:
+        return x*(style[:,0]+1)
 
 
 def upscale2d(x, factor=2):
@@ -77,38 +80,93 @@ class Blur(nn.Module):
     def forward(self, x):
         return F.conv2d(x, weight=self.weight, groups=self.groups, padding=1)
 
+class AdaIN(nn.Module):
+    def __init__(self, latent_size,outputs,temporal_w=False):
+        super(AdaIN, self).__init__()
+        self.instance_norm = nn.InstanceNorm2d(outputs,affine=False, eps=1e-8)
+        self.style = sn(ln.Conv1d(latent_size, 2 * outputs,1,1,0,gain=1)) if temporal_w else sn(ln.Linear(latent_size, 2 * outputs, gain=1))
+    def forward(self,x,w):
+        x = self.instance_norm(x)
+        x = style_mod(x,self.style(w))
+        return x
+
+class INencoder(nn.Module):
+    def __init__(self, inputs,latent_size,temporal_w=False):
+        super(INencoder, self).__init__()
+        self.temporal_w = temporal_w
+        self.instance_norm = nn.InstanceNorm2d(inputs,affine=False)
+        self.style = sn(ln.Conv1d(2 * inputs, latent_size,1,1,0)) if temporal_w else sn(ln.Linear(2 * inputs, latent_size))
+    def forward(self,x):
+        m = torch.mean(x, dim=[3] if self.temporal_w else [2,3], keepdim=True)
+        std = torch.sqrt(torch.mean((x - m) ** 2, dim=[3] if self.temporal_w else [2,3], keepdim=True))
+        style = torch.cat((m,std),dim=1)
+        x = self.instance_norm(x)
+        if self.temporal_w:
+            w = self.style(style.view(style.shape[0], style.shape[1],style.shape[2]))
+        else:
+            w = self.style(style.view(style.shape[0], style.shape[1]))
+        return x,w
+
 class Attention(nn.Module):
-  def __init__(self, inputs,temporal_w=False,attentional_style=False):
+  def __init__(self, inputs,temporal_w=False,attentional_style=False,decoding=True,latent_size=None,heads=1):
     super(Attention, self).__init__()
     # Channel multiplier
     self.inputs = inputs
     self.temporal_w = temporal_w
+    self.decoding = decoding
     self.attentional_style = attentional_style
-    self.theta = sn(ln.Conv2d(inputs, inputs // 8, 1,1,0, bias=False))
-    self.phi = sn(ln.Conv2d(inputs, inputs // 8, 1,1,0, bias=False))
+    self.att_denorm = 1
+    self.heads = heads
+    self.theta = sn(ln.Conv2d(inputs, inputs // self.att_denorm, 1,1,0, bias=False))
+    self.phi = sn(ln.Conv2d(inputs, inputs // self.att_denorm, 1,1,0, bias=False))
     self.g = sn(ln.Conv2d(inputs, inputs // 2, 1,1,0, bias=False))
     self.o = sn(ln.Conv2d(inputs // 2, inputs, 1,1,0, bias=False))
+    if not attentional_style:
+        self.norm_theta =  nn.InstanceNorm2d(inputs // self.att_denorm,affine=True)
+        self.norm_phi = nn.InstanceNorm2d(inputs // self.att_denorm,affine=True)
+        self.norm_g = nn.InstanceNorm2d(inputs // 2,affine=True)
+    else:
+        if decoding:
+            self.norm_theta = AdaIN(latent_size,inputs//self.att_denorm,temporal_w=temporal_w)
+            self.norm_phi = AdaIN(latent_size,inputs//self.att_denorm,temporal_w=temporal_w)
+            self.norm_g = AdaIN(latent_size,inputs//2,temporal_w=temporal_w)
+        else:
+            self.norm_theta = INencoder(inputs//self.att_denorm,latent_size,temporal_w=temporal_w)
+            self.norm_phi = INencoder(inputs//self.att_denorm,latent_size,temporal_w=temporal_w)
+            self.norm_g = INencoder(inputs//2,latent_size,temporal_w=temporal_w)
+
     # Learnable gain parameter
     self.gamma = P(torch.tensor(0.), requires_grad=True)
 
-  def forward(self, x, y=None):
+  def forward(self, x, w=None):
     # Apply convs
     x = x.contiguous()
     theta = self.theta(x)
+    theta = self.norm_theta(theta,w) if (self.attentional_style and self.decoding) else self.norm_theta(theta)
     phi = F.max_pool2d(self.phi(x), [2,2])
+    phi = self.norm_phi(phi,w) if (self.attentional_style and self.decoding) else self.norm_phi(phi)
     g = F.max_pool2d(self.g(x), [2,2])    
+    g = self.norm_g(g,w) if (self.attentional_style and self.decoding) else self.norm_g(g)
+    if self.attentional_style and not self.decoding:
+        theta,w_theta = theta
+        phi,w_phi = phi
+        g,w_g = g
+        w = w_theta+w_phi+w_g
+
     # Perform reshapes
-    theta = theta.view(-1, self.inputs // 8, x.shape[2] * x.shape[3])
-    phi = phi.view(-1, self.inputs // 8, x.shape[2] * x.shape[3] // 4)
-    g = g.view(-1, self.inputs // 2, x.shape[2] * x.shape[3] // 4)
+    self.theta_ = theta.reshape(-1, self.inputs // self.att_denorm//self.heads, self.heads ,x.shape[2] * x.shape[3])
+    self.phi_ = phi.reshape(-1, self.inputs // self.att_denorm//self.heads, self.heads, x.shape[2] * x.shape[3] // 4)
+    g = g.reshape(-1, self.inputs // 2//self.heads, self.heads, x.shape[2] * x.shape[3] // 4)
     # Matmul and softmax to get attention maps
-    beta = F.softmax(torch.bmm(theta.transpose(1, 2), phi), -1)
+    self.beta = F.softmax(torch.einsum('bchi,bchj->bhij',self.theta_, self.phi_), -1)
+    # self.beta = F.softmax(torch.bmm(self.theta_, self.phi_), -1)
     # Attention map times g path
-    o = self.o(torch.bmm(g, beta.transpose(1,2)).view(-1, self.inputs // 2, x.shape[2], x.shape[3]))
-    return self.gamma * o + x
+    o = self.o(torch.einsum('bchj,bhij->bchi',g, self.beta).reshape(-1, self.inputs // 2, x.shape[2], x.shape[3]))
+    # o = self.o(torch.bmm(g, self.beta.transpose(1,2)).view(-1, self.inputs // 2, x.shape[2], x.shape[3]))
+    return (self.gamma * o + x, w) if (self.attentional_style and (not self.decoding)) else self.gamma * o + x
 
 class EncodeBlock(nn.Module):
-    def __init__(self, inputs, outputs, latent_size, last=False,islast=False, fused_scale=True,temporal_w=False,residual=False,resample=False):
+    def __init__(self, inputs, outputs, latent_size, last=False,islast=False, fused_scale=True,temporal_w=False,residual=False,resample=False,temporal_samples=None,spec_chans=None):
         super(EncodeBlock, self).__init__()
         self.conv_1 = sn(ln.Conv2d(inputs, inputs, 3, 1, 1, bias=False))
         # self.conv_1 = ln.Conv2d(inputs + (1 if last else 0), inputs, 3, 1, 1, bias=False)
@@ -123,9 +181,9 @@ class EncodeBlock(nn.Module):
         self.temporal_w = temporal_w
         if last:
             if self.temporal_w:
-                self.dense = sn(ln.Linear(inputs * 4 * 4, outputs))
+                self.conv_2 = sn(ln.Conv2d(inputs * spec_chans, outputs, 3, 1, 1, bias=False))
             else:
-                self.conv_2 = sn(ln.Conv2d(inputs * 4, outputs, 3, 1, 1, bias=False))
+                self.dense = sn(ln.Linear(inputs * temporal_samples * spec_chans, outputs))
         else:
             if resample and fused_scale:
                 self.conv_2 = sn(ln.Conv2d(inputs, outputs, 3, 2, 1, bias=False, transform_kernel=True))
@@ -418,7 +476,7 @@ class ToRGB(nn.Module):
 
 @ENCODERS.register("EncoderDefault")
 class Encoder_old(nn.Module):
-    def __init__(self, startf, maxf, layer_count, latent_size, channels=3,average_w = False,temporal_w=False,residual=False,attention=None):
+    def __init__(self, startf, maxf, layer_count, latent_size, channels=3,average_w = False,temporal_w=False,residual=False,attention=None,temporal_samples=None,spec_chans=None,attentional_style=False,heads=1):
         super(Encoder_old, self).__init__()
         self.maxf = maxf
         self.startf = startf
@@ -428,6 +486,7 @@ class Encoder_old(nn.Module):
         self.latent_size = latent_size
         self.average_w = average_w
         self.temporal_w = temporal_w
+        self.attentional_style = attentional_style
         mul = 2
         inputs = startf
         self.encode_block: nn.ModuleList[EncodeBlock] = nn.ModuleList()
@@ -439,12 +498,13 @@ class Encoder_old(nn.Module):
 
             self.from_rgb.append(FromRGB(channels, inputs,residual=residual))
             apply_attention = attention and attention[self.layer_count-i-1]
-            non_local = Attention(inputs,temporal_w=None,attentional_style=None) if apply_attention else None
+            non_local = Attention(inputs,temporal_w=temporal_w,attentional_style=attentional_style,decoding=False,latent_size=latent_size,heads=heads) if apply_attention else None
             self.attention_block.append(non_local)
             fused_scale = resolution >= 128
-            
+            current_spec_chans = spec_chans // 2**i
+            current_temporal_samples = temporal_samples // 2**i
             islast = i==(self.layer_count-1)
-            block = EncodeBlock(inputs, outputs, latent_size, False, islast, fused_scale=fused_scale,temporal_w=temporal_w,residual=residual,resample=True)
+            block = EncodeBlock(inputs, outputs, latent_size, False, islast, fused_scale=fused_scale,temporal_w=temporal_w,residual=residual,resample=True,temporal_samples=current_temporal_samples,spec_chans=current_spec_chans)
 
             resolution //= 2
 
@@ -466,11 +526,13 @@ class Encoder_old(nn.Module):
         for i in range(self.layer_count - lod - 1, self.layer_count):
             if self.attention_block[i]:
                 x = self.attention_block[i](x)
+                if self.attentional_style:
+                    x,s = x
             x, s1, s2 = self.encode_block[i](x)
             if self.temporal_w and i!=0:
                 s1 = F.interpolate(s1,scale_factor=2**i)
                 s2 = F.interpolate(s2,scale_factor=2**i)
-            styles[:, 0] += s1 + s2
+            styles[:, 0] += s1 + s2 + (s if (self.attention_block[i] and self.attentional_style) else 0)
         if self.average_w:
             styles /= (lod+1)
         return styles
@@ -481,16 +543,17 @@ class Encoder_old(nn.Module):
             styles = torch.zeros(x.shape[0], 1, self.latent_size,128)
         else:
             styles = torch.zeros(x.shape[0], 1, self.latent_size)
-
         x = self.from_rgb[self.layer_count - lod - 1](x)
         x = F.leaky_relu(x, 0.2)
         if self.attention_block[self.layer_count - lod - 1]:
             x = self.attention_block[self.layer_count - lod - 1](x)
+            if self.attentional_style:
+                x,s = x
         x, s1, s2 = self.encode_block[self.layer_count - lod - 1](x)
         if self.temporal_w and i!=0:
             s1 = F.interpolate(s1,scale_factor=2**(layer_count - lod - 1))
             s2 = F.interpolate(s2,scale_factor=2**(layer_count - lod - 1))
-        styles[:, 0] += s1 * blend + s2 * blend
+        styles[:, 0] += s1 * blend + s2 * blend + (s*blend if (self.attention_block[self.layer_count - lod - 1] and self.attentional_style) else 0)
 
         x_prev = F.avg_pool2d(x_orig, 2, 2)
 
@@ -502,11 +565,13 @@ class Encoder_old(nn.Module):
         for i in range(self.layer_count - (lod - 1) - 1, self.layer_count):
             if self.attention_block[i]:
                 x = self.attention_block[i](x)
+                if self.attentional_style:
+                    x,s = x
             x, s1, s2 = self.encode_block[i](x)
             if self.temporal_w and i!=0:
                 s1 = F.interpolate(s1,scale_factor=2**i)
                 s2 = F.interpolate(s2,scale_factor=2**i)
-            styles[:, 0] += s1 + s2
+            styles[:, 0] += s1 + s2 + (s if (self.attention_block[i] and self.attentional_style) else 0)
         if self.average_w:
             styles /= (lod+1)
         return styles
@@ -847,7 +912,7 @@ class Discriminator(nn.Module):
 
 @GENERATORS.register("GeneratorDefault")
 class Generator(nn.Module):
-    def __init__(self, startf=32, maxf=256, layer_count=3, latent_size=128, channels=3, spec_chans=128,temporal_w=False,init_zeros=False,residual=False,attention=None):
+    def __init__(self, startf=32, maxf=256, layer_count=3, latent_size=128, channels=3, temporal_samples=128,spec_chans=128,temporal_w=False,init_zeros=False,residual=False,attention=None,attentional_style=False,heads=1):
         super(Generator, self).__init__()
         self.maxf = maxf
         self.startf = startf
@@ -858,11 +923,13 @@ class Generator(nn.Module):
         self.temporal_w = temporal_w
         self.init_zeros = init_zeros
         self.attention = attention
+        self.attentional_style = attentional_style
         mul = 2 ** (self.layer_count - 1)
 
         inputs = min(self.maxf, startf * mul)
         init_specchans = spec_chans//2**(self.layer_count-1)
-        self.const = Parameter(torch.Tensor(1, inputs, 4, init_specchans))
+        init_temporalsamples = temporal_samples//2**(self.layer_count-1)
+        self.const = Parameter(torch.Tensor(1, inputs, init_temporalsamples, init_specchans))
         if init_zeros:
             init.zeros_(self.const)
         else:
@@ -894,7 +961,7 @@ class Generator(nn.Module):
             #print("decode_block%d %s styles in: %dl out resolution: %d" % (
             #    (i + 1), millify(count_parameters(block)), outputs, resolution))
             apply_attention = attention and attention[i]
-            non_local = Attention(outputs,temporal_w=None,attentional_style=None) if apply_attention else None
+            non_local = Attention(outputs,temporal_w=temporal_w,attentional_style=attentional_style,decoding=True,latent_size=latent_size,heads=heads) if apply_attention else None
             self.decode_block.append(block)
             self.attention_block.append(non_local)
             inputs = outputs
@@ -914,7 +981,7 @@ class Generator(nn.Module):
                 w2 = styles[:, 2 * i + 1]
             x = self.decode_block[i](x, w1, w2, noise)
             if self.attention_block[i]:
-                x = self.attention_block[i](x)
+                x = self.attention_block[i](x,w1) if self.attentional_style else self.attention_block[i](x)
 
         x = self.to_rgb[lod](x)
         return x
@@ -931,7 +998,7 @@ class Generator(nn.Module):
                 w2 = styles[:, 2 * i + 1]
             x = self.decode_block[i](x, w1, w2, noise)
             if self.attention_block[i]:
-                x = self.attention_block[i](x)
+                x = self.attention_block[i](x,w1) if self.attentional_style else self.attention_block[i](x)
         x_prev = self.to_rgb[lod - 1](x)
 
         if self.temporal_w and lod!=self.layer_count-1:
@@ -942,12 +1009,12 @@ class Generator(nn.Module):
             w2 = styles[:, 2 * lod + 1]
         x = self.decode_block[lod](x, w1, w2, noise)
         if self.attention_block[lod]:
-            x = self.attention_block[lod](x)
+            x = self.attention_block[lod](x,w1) if self.attentional_style else self.attention_block[lod](x)
         x = self.to_rgb[lod](x)
 
         needed_resolution = self.layer_to_resolution[lod]
 
-        x_prev = F.interpolate(x_prev, size=needed_resolution)
+        x_prev = F.interpolate(x_prev, scale_factor = 2.0)
         x = torch.lerp(x_prev, x, blend)
 
         return x
