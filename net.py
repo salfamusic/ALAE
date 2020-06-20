@@ -115,7 +115,7 @@ class Attention(nn.Module):
     self.temporal_w = temporal_w
     self.decoding = decoding
     self.attentional_style = attentional_style
-    self.att_denorm = 1
+    self.att_denorm = 8
     self.heads = heads
     self.theta = sn(ln.Conv2d(inputs, inputs // self.att_denorm, 1,1,0, bias=False))
     self.phi = sn(ln.Conv2d(inputs, inputs // self.att_denorm, 1,1,0, bias=False))

@@ -34,12 +34,13 @@ MODEL:
   RESIDUAL: True
   W_CLASSIFIER: False
   CYCLE: True
-  ATTENTIONAL_STYLE: True
+  ATTENTIONAL_STYLE: False
   #T            4      8      16    32    64    128 
   ATTENTION: [False, False, False, False, True, True]
-  HEADS: 4
+  HEADS: 1
   # ATTENTION: []
-OUTPUT_DIR: training_artifacts/ecog_residual_cycle_attention3264wStyleIN_specchan64_more_attentfeatures_heads4
+OUTPUT_DIR: training_artifacts/vis
+# OUTPUT_DIR: training_artifacts/ecog_residual_cycle_attention3264wStyleIN_specchan64_more_attentfeatures_heads4
 #####################################
 
 TRAIN:

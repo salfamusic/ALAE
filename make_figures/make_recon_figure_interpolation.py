@@ -110,7 +110,7 @@ def sample(cfg, logger):
                                 logger=logger,
                                 save=False)
 
-    extra_checkpoint_data = checkpointer.load(file_name='./training_artifacts/ecog_residual_cycle_attention3264wStyleIN_specchan64_more_attentfeatures/model_tmp_lod5.pth')
+    extra_checkpoint_data = checkpointer.load(file_name='./training_artifacts/ecog_residual_cycle_attention3264wIN_specchan64_cont/model_tmp_lod5.pth')
     # extra_checkpoint_data = checkpointer.load(file_name='./training_artifacts/ecog_residual_cycle_attention3264wIN_specchan64_more_attentfeatures/model_tmp_lod4.pth')
 
     model.eval()

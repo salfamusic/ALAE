@@ -33,7 +33,7 @@ import lod_driver
 from PIL import Image
 import numpy as np
 
-def save_sample(lod2batch, tracker, sample, samplez, x, logger, model, cfg, encoder_optimizer, decoder_optimizer):
+def save_sample(lod2batch, tracker, sample, samplez, x, logger, model, cfg, encoder_optimizer, decoder_optimizer,filename=None):
     os.makedirs('results', exist_ok=True)
     logger.info('\n[%d/%d] - ptime: %.2f, %s, blend: %.3f, lr: %.12f,  %.12f, max mem: %f",' % (
         (lod2batch.current_epoch + 1), cfg.TRAIN.TRAIN_EPOCHS, lod2batch.per_epoch_ptime, str(tracker),
@@ -101,10 +101,13 @@ def save_sample(lod2batch, tracker, sample, samplez, x, logger, model, cfg, enco
 
             result_sample = x_rec * 0.5 + 0.5
             result_sample = result_sample.cpu()
-            f = os.path.join(cfg.OUTPUT_DIR,
-                             'sample_%d_%d.jpg' % (
-                                 lod2batch.current_epoch + 1,
-                                 lod2batch.iteration // 1000)
+            if filename:
+                f =filename
+            else:
+                f = os.path.join(cfg.OUTPUT_DIR,
+                                'sample_%d_%d.jpg' % (
+                                    lod2batch.current_epoch + 1,
+                                    lod2batch.iteration // 1000)
                              )
             print("Saved to %s" % f)
             # save_image(result_sample, f, nrow=min(32, lod2batch.get_per_GPU_batch_size()))
