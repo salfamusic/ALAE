@@ -47,6 +47,14 @@ def _run(rank, world_size, fn, defaults, write_log, no_cuda, args):
         config_file = os.path.join('configs', config_file)
     cfg.merge_from_file(config_file)
     cfg.merge_from_list(args.opts)
+    if cfg.FINETUNE.FINETUNE:
+        cfg.MODEL.ECOG = True
+        cfg.MODEL.SUPLOSS_ON_ECOGF = cfg.FINETUNE.FIX_GEN
+        cfg.MODEL.W_SUP = cfg.FINETUNE.ENCODER_GUIDE
+    cfg.TRAIN.LOD_2_BATCH_1GPU = [bs//len(cfg.DATASET.SUBJECT) for bs in cfg.TRAIN.LOD_2_BATCH_1GPU]
+    cfg.TRAIN.LOD_2_BATCH_2GPU = [bs//len(cfg.DATASET.SUBJECT) for bs in cfg.TRAIN.LOD_2_BATCH_2GPU]
+    cfg.TRAIN.LOD_2_BATCH_4GPU = [bs//len(cfg.DATASET.SUBJECT) for bs in cfg.TRAIN.LOD_2_BATCH_4GPU]
+    cfg.TRAIN.LOD_2_BATCH_8GPU = [bs//len(cfg.DATASET.SUBJECT) for bs in cfg.TRAIN.LOD_2_BATCH_8GPU]
     cfg.freeze()
 
     logger = logging.getLogger("logger")

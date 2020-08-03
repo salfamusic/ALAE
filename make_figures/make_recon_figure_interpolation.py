@@ -65,9 +65,12 @@ def sample(cfg, logger):
         channels=cfg.MODEL.CHANNELS,
         generator=cfg.MODEL.GENERATOR,
         encoder=cfg.MODEL.ENCODER,
+        ecog_encoder=cfg.MODEL.MAPPING_FROM_ECOG,
         z_regression=cfg.MODEL.Z_REGRESSION,
         average_w = cfg.MODEL.AVERAGE_W,
         temporal_w = cfg.MODEL.TEMPORAL_W,
+        global_w = cfg.MODEL.GLOBAL_W,
+        temporal_global_cat = cfg.MODEL.TEMPORAL_GLOBAL_CAT,
         spec_chans = cfg.DATASET.SPEC_CHANS,
         temporal_samples = cfg.DATASET.TEMPORAL_SAMPLES,
         init_zeros = cfg.MODEL.TEMPORAL_W,
@@ -77,7 +80,17 @@ def sample(cfg, logger):
         attention = cfg.MODEL.ATTENTION,
         cycle = cfg.MODEL.CYCLE,
         w_weight = cfg.TRAIN.W_WEIGHT,
-        cycle_weight=cfg.TRAIN.CYCLE_WEIGHT,)
+        cycle_weight=cfg.TRAIN.CYCLE_WEIGHT,
+        attentional_style=cfg.MODEL.ATTENTIONAL_STYLE,
+        heads = cfg.MODEL.HEADS,
+        suploss_on_ecog = cfg.MODEL.SUPLOSS_ON_ECOGF,
+        less_temporal_feature = cfg.MODEL.LESS_TEMPORAL_FEATURE,
+        ppl_weight=cfg.MODEL.PPL_WEIGHT,
+        ppl_global_weight=cfg.MODEL.PPL_GLOBAL_WEIGHT,
+        ppld_weight=cfg.MODEL.PPLD_WEIGHT,
+        ppld_global_weight=cfg.MODEL.PPLD_GLOBAL_WEIGHT,
+        common_z = cfg.MODEL.COMMON_Z,
+    )
     model.cuda(0)
     model.eval()
     model.requires_grad_(False)
@@ -110,7 +123,7 @@ def sample(cfg, logger):
                                 logger=logger,
                                 save=False)
 
-    extra_checkpoint_data = checkpointer.load(file_name='./training_artifacts/ecog_residual_cycle_attention3264wIN_specchan64_cont/model_tmp_lod5.pth')
+    extra_checkpoint_data = checkpointer.load(file_name='./training_artifacts/ecog_residual_latent128_temporal_lesstemporalfeature_noprogressive_HBw_ppl_ppld_localreg_debug/model_tmp_lod6.pth')
     # extra_checkpoint_data = checkpointer.load(file_name='./training_artifacts/ecog_residual_cycle_attention3264wIN_specchan64_more_attentfeatures/model_tmp_lod4.pth')
 
     model.eval()
@@ -118,26 +131,36 @@ def sample(cfg, logger):
     layer_count = cfg.MODEL.LAYER_COUNT
     def encode(x):
         Z, _ = model.encode(x, layer_count - 1, 1)
-        Z = Z.repeat(1, model.mapping_fl.num_layers, 1)
+        if cfg.MODEL.TEMPORAL_W and cfg.MODEL.GLOBAL_W:
+            Z = (Z[0].repeat(1, model.mapping_fl.num_layers, 1, 1),Z[1].repeat(1, model.mapping_fl.num_layers, 1))
+        else:
+            if cfg.MODEL.TEMPORAL_W:
+                Z = Z.repeat(1, model.mapping_fl.num_layers, 1, 1)
+            else:
+                Z = Z.repeat(1, model.mapping_fl.num_layers, 1)
         return Z
 
     def decode(x):
-        layer_idx = torch.arange(2 * cfg.MODEL.LAYER_COUNT)[np.newaxis, :, np.newaxis]
-        ones = torch.ones(layer_idx.shape, dtype=torch.float32)
-        coefs = torch.where(layer_idx < model.truncation_cutoff, ones, ones)
+        # layer_idx = torch.arange(2 * cfg.MODEL.LAYER_COUNT)[np.newaxis, :, np.newaxis]
+        # ones = torch.ones(layer_idx.shape, dtype=torch.float32)
+        # coefs = torch.where(layer_idx < model.truncation_cutoff, ones, ones)
         # x = torch.lerp(model.dlatent_avg.buff.data, x, coefs)
         return model.decoder(x, layer_count - 1, 1, noise=True)
-    import pdb; pdb.set_trace()
     rnd = np.random.RandomState(4)
     latents = rnd.randn(1, cfg.MODEL.LATENT_SPACE_SIZE)
 
     path = cfg.DATASET.SAMPLES_PATH
     im_size = 2 ** (cfg.MODEL.LAYER_COUNT + 1)
 
-    pathA = 'kite.npy'
-    pathB = 'cat.npy'
+    # pathA = 'kite.npy'
+    # pathB = 'cat.npy'
+    # pathC = 'hat.npy'
+    # pathD = 'cake.npy'
+    pathA = 'vase.npy'
+    pathB = 'cow.npy'
     pathC = 'hat.npy'
     pathD = 'cake.npy'
+
 
     # def open_image(filename):
     #     img = np.asarray(Image.open(path + '/' + filename))
@@ -157,17 +180,26 @@ def sample(cfg, logger):
     def open_image(filename):
         im = np.load(os.path.join(path, filename))
         x = torch.tensor(np.asarray(im, dtype=np.float32), device='cpu', requires_grad=True).cuda()
-        factor = x.shape[2] // im_size
+        factor = x.shape[1] // im_size
         if factor != 1:
             x = torch.nn.functional.avg_pool2d(x[None, ...], factor, factor)[0]
-        assert x.shape[2] == im_size
+        assert x.shape[1] == im_size
         _latents = encode(x[None, ...].cuda())
-        latents = _latents[0, 0]
+        if cfg.MODEL.TEMPORAL_W and cfg.MODEL.GLOBAL_W:
+            latents = (_latents[0][0,0],_latents[1][0,0])
+        else:
+            latents = _latents[0, 0]
         return latents
 
     def make(w):
         with torch.no_grad():
-            w = w[None, None, ...].repeat(1, model.mapping_fl.num_layers, 1)
+            if cfg.MODEL.TEMPORAL_W and cfg.MODEL.GLOBAL_W:
+                w = (w[0][None, None, ...].repeat(1, model.mapping_fl.num_layers, 1, 1),w[1][None, None, ...].repeat(1, model.mapping_fl.num_layers, 1))
+            else:
+                if cfg.MODEL.TEMPORAL_W:
+                    w = w[None, None, ...].repeat(1, model.mapping_fl.num_layers, 1, 1)
+                else:
+                    w = w[None, None, ...].repeat(1, model.mapping_fl.num_layers, 1)
             x_rec = decode(w)
             return x_rec
 
@@ -175,9 +207,9 @@ def sample(cfg, logger):
     wb = open_image(pathB)
     wc = open_image(pathC)
     wd = open_image(pathD)
-    import pdb; pdb.set_trace()
-    height = 7
-    width = 7
+    import pdb;pdb.set_trace()
+    height = 10
+    width = 10
 
     images = []
 
@@ -191,18 +223,22 @@ def sample(cfg, logger):
             kc = (1.0 - kh) * kv
             kd = kh * kv
 
-            w = ka * wa + kb * wb + kc * wc + kd * wd
+            if cfg.MODEL.TEMPORAL_W and cfg.MODEL.GLOBAL_W:
+                w = ((1-kh) * wa[0] + kh * wb[0] , (1-kv) * wa[1] + kv * wb[1])
+            else:
+                w = ka * wa + kb * wb + kc * wc + kd * wd
 
             interpolated = make(w)
             images.append(interpolated)
 
     images = torch.cat(images)
+    images = images.permute(0,1,3,2)
     os.makedirs('make_figures/output/%s' % cfg.NAME, exist_ok=True)
-    save_image(images * 0.5 + 0.5, 'make_figures/output/%s/interpolations.png' % cfg.NAME, nrow=width)
-    save_image(images * 0.5 + 0.5, 'make_figures/output/%s/interpolations.jpg' % cfg.NAME, nrow=width)
+    save_image(images * 0.5 + 0.5, 'make_figures/output/%s/interpolations_vase_cow.png' % cfg.NAME, nrow=width)
+    save_image(images * 0.5 + 0.5, 'make_figures/output/%s/interpolations_vase_cow.jpg' % cfg.NAME, nrow=width)
 
 
 if __name__ == "__main__":
     gpu_count = 1
-    run(sample, get_cfg_defaults(), description='ALAE-interpolations', default_config='configs/ecog.yaml',
+    run(sample, get_cfg_defaults(), description='ALAE-interpolations', default_config='configs/ecog_style2.yaml',
         world_size=gpu_count, write_log=False)

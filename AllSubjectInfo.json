@@ -21,6 +21,7 @@
             "Task":["AudN","SenComp","VisRead","PicN","AudRep"]
         },
         "NY749":{
+            "Density":"HB",
             "Task":["AudN","SenComp","VisRead","PicN","AudRep"]
         },
         "HD06":{

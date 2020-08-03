@@ -9,15 +9,21 @@
 	"DOWN_TF_FS": 125,
 	"DOWN_ECOG_FS": 125,
 	"Subj":{
+		"NY717":{
+			"Crop": null,
+			"Task": ["VisRead","SenComp","PicN","AudN","AudRep"],
+			"TestNum":[10,10,10,10,10]
+		},
 		"NY742":{
 				"Crop": null,
 				"Task": ["VisRead","SenComp","PicN","AudN","AudRep"],
-				"TestNum":[50,15,50,15,50]
+				"TestNum":[10,10,10,10,10]
+			},
+		"NY749":{
+				"Crop": null,
+				"Task": ["VisRead","SenComp","PicN","AudN","AudRep"],
+				"TestNum":[10,10,10,10,10]
 			}
-	},
-	"Data":{
-		"Subj":"NY742",
-		"T": 100
 	},
 	"Train":{
 		"lr": 0.001,

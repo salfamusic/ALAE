@@ -1,4 +1,5 @@
 import json
+import pdb
 import torch
 import os
 import numpy as np
@@ -10,7 +11,7 @@ import pandas
 from torch.utils.data import Dataset
 from defaults import get_cfg_defaults
 cfg = get_cfg_defaults()
-cfg.merge_from_file('configs/ecog.yaml')
+cfg.merge_from_file('configs/ecog_style2.yaml')
 BCTS = cfg.DATASET.BCTS
 
 class ECoGDataset(Dataset):
@@ -427,7 +428,8 @@ class ECoGDataset(Dataset):
                 wave_+=[wavearray]
 
                 if self.Prod:
-                    spkr_redata = h5py.File(os.path.join(datapath_task,'TFzoom'+str(self.SpecBands)+'_16k.mat'),'r')
+                    spkr_redata = h5py.File(os.path.join(datapath_task,'TFzoom'+str(self.SpecBands)+'_denoise_16k.mat'),'r')
+                    # spkr_redata = h5py.File(os.path.join(datapath_task,'TFzoom'+str(self.SpecBands)+'_16k.mat'),'r')
                     spkr_re = np.asarray(spkr_redata['TFlog'])
                     spkr_re = signal.resample(spkr_re,int(1.0*spkr_re.shape[0]/self.ORG_TF_FS*self.DOWN_TF_FS),axis=0)
                     if HD:
@@ -458,7 +460,8 @@ class ECoGDataset(Dataset):
                         spkr_re = spkr_re_trim
                     spkr_re_+=[spkr_re]
 
-                    wave_redata = h5py.File(os.path.join(datapath_task,'zoom_16k.mat'),'r')
+                    wave_redata = h5py.File(os.path.join(datapath_task,'zoom_denoise_16k.mat'),'r')
+                    # wave_redata = h5py.File(os.path.join(datapath_task,'zoom_16k.mat'),'r')
                     wave_rearray = np.asarray(wave_redata['zoom'])
                     wave_rearray = wave_rearray.T
                     wave_re_trim = np.zeros([int(ecog.shape[0]*1.0/self.DOWN_ECOG_FS*self.DOWN_WAVE_FS),wave_rearray.shape[1]])
@@ -495,7 +498,7 @@ class ECoGDataset(Dataset):
                 word_test+=[label_ind[-self.TestNum:]]
                 labels_test+=[label_subset[-self.TestNum:]]
 
-            ################ clean ##################8jn8jn8j8,n,kj8j8,kn,jk,knj8,nj,knjnjkn,knµ
+            ################ clean ##################
             if not HD:
                 # bad_samples_ = np.where(bad_samples_==1)[0]
                 bad_samples_ = np.where(np.logical_or(np.logical_or(bad_samples_==1, bad_samples_==2) , bad_samples_==4))[0]
@@ -635,9 +638,9 @@ class ECoGDataset(Dataset):
     def __len__(self):
         if self.mode == 'train':
             if self.Prod:
-                return self.meta_data['start_ind_re_alldataset'][0].shape[0]*128
+                return np.array([start_ind_re_alldataset.shape[0]*128 for start_ind_re_alldataset in self.meta_data['start_ind_re_alldataset']]).sum()
             else:
-                return self.meta_data['start_ind_alldataset'][0].shape[0]*128
+                return np.array([start_ind_alldataset.shape[0]*128 for start_ind_alldataset in self.meta_data['start_ind_alldataset']]).sum()
         else:
             return self.TestNum_cum[0]
 
@@ -686,6 +689,8 @@ class ECoGDataset(Dataset):
         wave_re_batch_all = []
         label_batch_all = []
         word_batch_all = []
+        on_stage_batch_all = []
+        on_stage_re_batch_all = []
         self.SeqLenSpkr = self.SeqLen*int(self.DOWN_TF_FS*1.0/self.DOWN_ECOG_FS)
         imagesize = 2**self.current_lod
         for i in range(num_dataset):
@@ -694,20 +699,20 @@ class ECoGDataset(Dataset):
                 rand_ind = np.random.choice(np.arange(start_ind_valid_alldataset[i].shape[0])[:-self.TestNum_cum[i]],1,replace=False)[0]
             elif self.mode =='test':
                 if self.Prod:
-                    rand_ind = idx+start_ind_valid_alldataset[i].shape[0]-self.TestNum_cum[i]
-                else:
                     rand_ind = idx+start_ind_re_valid_alldataset[i].shape[0]-self.TestNum_cum[i]
+                else:
+                    rand_ind = idx+start_ind_valid_alldataset[i].shape[0]-self.TestNum_cum[i]
             # label_valid = np.delete(label_alldataset[i],bad_samples_alldataset[i])
             label = [label_alldataset[i][rand_ind]]
             word = word_alldataset[i][rand_ind]
-            indx = start_ind_valid_alldataset[i][rand_ind]
+            start_indx = start_ind_valid_alldataset[i][rand_ind]
             end_indx = end_ind_valid_alldataset[i][rand_ind]
             ecog_batch = np.zeros((self.SeqLen+n_delay_2-n_delay_1 ,ecog_alldataset[i].shape[-1]))
             # ecog_batch = np.zeros((self.SeqLen ,ecog_alldataset[i].shape[-1]))
             spkr_batch = np.zeros(( self.SeqLenSpkr,spkr_alldataset[i].shape[-1]))
             wave_batch = np.zeros(( (self.SeqLen*int(self.DOWN_WAVE_FS*1.0/self.DOWN_ECOG_FS)),wave_alldataset[i].shape[-1]))
             if self.Prod:
-                indx_re = start_ind_re_valid_alldataset[i][rand_ind]
+                start_indx_re = start_ind_re_valid_alldataset[i][rand_ind]
                 end_indx_re = end_ind_re_valid_alldataset[i][rand_ind]
                 ecog_batch_re = np.zeros((self.SeqLen+n_delay_2-n_delay_1 ,ecog_alldataset[i].shape[-1]))
                 # ecog_batch_re = np.zeros((self.SeqLen ,ecog_alldataset[i].shape[-1]))
@@ -716,24 +721,30 @@ class ECoGDataset(Dataset):
 
             if self.mode =='train':
                 # indx = np.maximum(indx+np.random.choice(np.arange(np.minimum(-(self.SeqLenSpkr-(end_indx-indx)),-1),np.maximum(-(self.SeqLenSpkr-(end_indx-indx)),0)),1)[0],0)
-                indx = np.maximum(indx+np.random.choice(np.arange(-64,end_indx-indx-64),1)[0],0)
+                chosen_start = np.random.choice(np.arange(-64,end_indx-start_indx-64),1)[0]
+                indx = np.maximum(start_indx+chosen_start,0)
                 # indx = indx - self.ahead_onset_test
                 if self.Prod:
-                    # indx_re = np.maximum(indx+np.random.choice(np.arange(np.minimum(-(self.SeqLenSpkr-(end_indx_re-indx_re)),-1),np.maximum(-(self.SeqLenSpkr-(end_indx_re-indx_re)),0)),1)[0],0)
-                    indx_re = np.maximum(indx_re+np.random.choice(np.arange(-64,end_indx_re-indx_re-64),1)[0],0)
+                    # indx_re = np.maximum(indx_re+np.random.choice(np.arange(np.minimum(-(self.SeqLenSpkr-(end_indx_re-indx_re)),-1),np.maximum(-(self.SeqLenSpkr-(end_indx_re-indx_re)),0)),1)[0],0)
+                    chosen_start_re = np.random.choice(np.arange(-64,end_indx_re-start_indx_re-64),1)[0]
+                    indx_re = np.maximum(start_indx_re+chosen_start_re,0)
                     # indx_re = indx_re-self.ahead_onset_test
             elif self.mode =='test':
-                indx = indx - self.ahead_onset_test
+                indx = start_indx - self.ahead_onset_test
                 if self.Prod:
-                    indx_re = indx_re-self.ahead_onset_test
+                    indx_re = start_indx_re-self.ahead_onset_test
 
             # indx = indx.item()
             ecog_batch = ecog_alldataset[i][indx+n_delay_1:indx+self.SeqLen+n_delay_2]
             # ecog_batch = ecog_alldataset[i][indx+n_delay_1:indx+self.SeqLen+n_delay_1]
+            on_stage_batch = np.zeros([1,self.SeqLenSpkr])
+            on_stage_batch[:,np.maximum(start_indx-indx,0): np.minimum(end_indx-indx,self.SeqLenSpkr-1)] = 1.0
             spkr_batch = spkr_alldataset[i][indx:indx+self.SeqLenSpkr]
             wave_batch = wave_alldataset[i][(indx*int(self.DOWN_WAVE_FS*1.0/self.DOWN_ECOG_FS)):((indx+self.SeqLen)*int(self.DOWN_WAVE_FS*1.0/self.DOWN_ECOG_FS))]
             if self.Prod:
                 # indx_re = indx_re.item()
+                on_stage_re_batch = np.zeros([1,self.SeqLenSpkr])
+                on_stage_re_batch[:,np.maximum(start_indx_re-indx_re,0): np.minimum(end_indx_re-indx_re,self.SeqLenSpkr-1)] = 1.0
                 ecog_batch_re = ecog_alldataset[i][indx_re+n_delay_1:indx_re+self.SeqLen+n_delay_2]
                 # ecog_batch_re = ecog_alldataset[i][indx_re+n_delay_1:indx_re+self.SeqLen+n_delay_1]
                 spkr_batch_re = spkr_re_alldataset[i][indx_re:indx_re+self.SeqLenSpkr]
@@ -752,28 +763,42 @@ class ECoGDataset(Dataset):
             ecog_batch_all += [ecog_batch]
             spkr_batch_all += [spkr_batch[np.newaxis,...]]
             wave_batch_all += [wave_batch.swapaxes(-2,-1)]
+            on_stage_batch_all += [on_stage_batch]
             if self.Prod:
                 ecog_re_batch_all += [ecog_batch_re]
                 spkr_re_batch_all += [spkr_batch_re[np.newaxis,...]]
                 wave_re_batch_all += [wave_batch_re.swapaxes(-2,-1)]
+                on_stage_re_batch_all += [on_stage_re_batch]
             label_batch_all +=[label]
             word_batch_all +=[word]
             mni_coordinate_all +=[mni_batch.swapaxes(-2,-1)]
             regions_all +=[self.meta_data['regions_alldataset'][i]]
-            mask_all +=[self.meta_data['mask_prior_alldataset'][i]]
+            mask_all +=[self.meta_data['mask_prior_alldataset'][i][np.newaxis,...]]
+
+        # # spkr_batch_all = np.concatenate(spkr_batch_all,axis=0)
+        # # wave_batch_all = np.concatenate(wave_batch_all,axis=0)
+        # # if self.Prod:
+        # #     spkr_re_batch_all = np.concatenate(spkr_re_batch_all,axis=0)
+        # #     wave_re_batch_all = np.concatenate(wave_re_batch_all,axis=0)
+        # label_batch_all = np.concatenate(label_batch_all,axis=0).tolist()
+        # word_batch_all = np.array(word_batch_all)
+        # # baseline_batch_all = np.concatenate(self.meta_data['baseline_alldataset'],axis=0)
+        # # mni_coordinate_all = np.concatenate(mni_coordinate_all,axis=0)
+        # regions_all = np.concatenate(regions_all,axis=0).tolist()
+
 
         spkr_batch_all = np.concatenate(spkr_batch_all,axis=0)
         wave_batch_all = np.concatenate(wave_batch_all,axis=0)
+        on_stage_batch_all = np.concatenate(on_stage_batch_all,axis=0)
         if self.Prod:
             spkr_re_batch_all = np.concatenate(spkr_re_batch_all,axis=0)
             wave_re_batch_all = np.concatenate(wave_re_batch_all,axis=0)
+            on_stage_re_batch_all = np.concatenate(on_stage_re_batch_all,axis=0)
         label_batch_all = np.concatenate(label_batch_all,axis=0).tolist()
-        # word_batch_all = np.concatenate(word_batch_all,axis=0)
         word_batch_all = np.array(word_batch_all)
         baseline_batch_all = np.concatenate(self.meta_data['baseline_alldataset'],axis=0)
         mni_coordinate_all = np.concatenate(mni_coordinate_all,axis=0)
         regions_all = np.concatenate(regions_all,axis=0).tolist()
-        mask_all = np.concatenate(mask_all,axis=0)
 
         return {'ecog_batch_all':ecog_batch_all,
                 'spkr_batch_all':spkr_batch_all,
@@ -781,11 +806,20 @@ class ECoGDataset(Dataset):
                 'ecog_re_batch_all':ecog_re_batch_all,
                 'spkr_re_batch_all':spkr_re_batch_all,
                 'wave_re_batch_all':wave_re_batch_all,
-                'baseline_batch_all':baseline_batch_all,
+                # 'baseline_batch_all':baseline_batch_all,
                 'label_batch_all':label_batch_all,
                 'dataset_names':dataset_names,
                 'mni_coordinate_all': mni_coordinate_all,
                 'regions_all':regions_all,
                 'mask_all': mask_all,
                 'word_batch_all':word_batch_all,
+                'on_stage_batch_all':on_stage_batch_all,
+                'on_stage_re_batch_all':on_stage_re_batch_all,
                 }
+
+
+def concate_batch(metabatch,expection_keys=['ecog_batch_all','mask_all','label_batch_all','dataset_names','regions_all','word_batch_all']):
+    for key in metabatch.keys():
+        if key not in expection_keys:
+            metabatch[key] = torch.cat(metabatch[key],dim=0)
+    return metabatch
