@@ -52,7 +52,7 @@ def color_spec(spec,components,n_mels):
       sample_in_color_freq = freq_coloring(sample_in_color_freq,formants_freqs[:,j].unsqueeze(1),clrs[j])
    return sample_in_color_voicing,sample_in_color_freq
 
-def save_sample(sample,ecog,mask_prior,encoder,decoder,ecog_encoder,epoch,mode='test',path='training_artifacts/formantsysth_voicingandunvoicing_loudness',tracker=None):
+def save_sample(sample,ecog,mask_prior,mni,encoder,decoder,ecog_encoder,epoch,mode='test',path='training_artifacts/formantsysth_voicingandunvoicing_loudness',tracker=None):
    os.makedirs(path, exist_ok=True)
    with torch.no_grad():
       encoder.eval()
@@ -68,11 +68,12 @@ def save_sample(sample,ecog,mask_prior,encoder,decoder,ecog_encoder,epoch,mode='
          sample_in_color_voicing_ecog_all = torch.tensor([])
          rec_ecog_all = torch.tensor([])
       n_mels = sample.shape[-1]
-      for i in range(0,sample.shape[0],9):
-         sample_in = sample[i:np.minimum(i+9,sample.shape[0])]
+      for i in range(0,sample.shape[0],1):
+         sample_in = sample[i:np.minimum(i+1,sample.shape[0])]
          if ecog_encoder is not None:
-            ecog_in = [ecog[j][i:np.minimum(i+9,sample.shape[0])] for j in range(len(ecog))]
-            mask_prior_in = [mask_prior[j][i:np.minimum(i+9,sample.shape[0])] for j in range(len(ecog))]
+            ecog_in = [ecog[j][i:np.minimum(i+1,sample.shape[0])] for j in range(len(ecog))]
+            mask_prior_in = [mask_prior[j][i:np.minimum(i+1,sample.shape[0])] for j in range(len(ecog))]
+            mni_in = mni[i:np.minimum(i+1,sample.shape[0])]
          components = encoder(sample_in)
          rec = decoder(components)
          sample_in_color_voicing,sample_in_color_freq = color_spec(sample_in,components,n_mels)
@@ -83,7 +84,7 @@ def save_sample(sample,ecog,mask_prior,encoder,decoder,ecog_encoder,epoch,mode='
          sample_in_color_voicing_all = torch.cat([sample_in_color_voicing_all,sample_in_color_voicing],dim=0)
          rec_all = torch.cat([rec_all,rec],dim=0)
          if ecog_encoder is not None:
-            components_ecog = ecog_encoder(ecog_in,mask_prior_in)
+            components_ecog = ecog_encoder(ecog_in,mask_prior_in,mni=mni_in)
             rec_ecog = decoder(components_ecog)
             rec_ecog = rec_ecog.repeat(1,3,1,1)
             rec_ecog = rec_ecog * 0.5 + 0.5

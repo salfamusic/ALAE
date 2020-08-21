@@ -2192,3 +2192,5 @@ class GeneratorFC(nn.Module):
 
     def forward(self, x, lod, blend_factor, noise):
         return self.decode(x, lod, blend_factor, noise)
+
+

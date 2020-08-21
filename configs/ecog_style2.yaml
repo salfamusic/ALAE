@@ -32,7 +32,7 @@ MODEL:
   TRUNCATIOM_CUTOFF: 5
   CHANNELS: 1
   UNIQ_WORDS: 50
-  MAPPING_FROM_ECOG: "ECoGMappingBottleneck"
+  MAPPING_FROM_ECOG: "ECoGMappingTransformer"
   ECOG: False #will be overloaded if FINETUNE
   SUPLOSS_ON_ECOGF: False # will be overloaded to FIX_GEN if FINETUNE,spec supervise loss only apply to ecog encoder
   W_SUP: False
@@ -57,9 +57,16 @@ MODEL:
   PPLD_WEIGHT: 1
   PPLD_GLOBAL_WEIGHT: 0
   COMMON_Z: True
+  TRANSFORMER:
+    HIDDEN_DIM : 256
+    DIM_FEEDFORWARD : 256
+    ENCODER_ONLY : False
+    ATTENTIONAL_MASK : False
+    N_HEADS : 4
+    NON_LOCAL: True
   # ATTENTION: []
 # OUTPUT_DIR: training_artifacts/debug
-OUTPUT_DIR: training_artifacts/formantsyth_ecogfinetune_NY742
+OUTPUT_DIR: training_artifacts/formantsyth_NY742_constraintonFB_Bconstrainrefined_absfreq
 # OUTPUT_DIR: training_artifacts/ecog_residual_latent128_temporal_lesstemporalfeature_noprogressive_HBw_ppl_ppld_localreg_ecogf_w_spec_sup
 # OUTPUT_DIR: training_artifacts/ecog_residual_latent128_temporal_lesstemporalfeature_ppl_ppld
 # OUTPUT_DIR: training_artifacts/ecog_residual_cycle_attention3264wStyleIN_specchan64_more_attentfeatures_heads4
@@ -90,6 +97,7 @@ TRAIN:
   # LOD_2_BATCH_1GPU: [128, 128, 128,   128,   64,    32]
   # LOD_2_BATCH_1GPU: [512, 256, 256,   128,   64,    16]
   LOD_2_BATCH_1GPU: [64, 64, 64,   64,   32,    16]
-
+  BATCH_SIZE : 32
+  # BATCH_SIZE : 2
   LEARNING_RATES: [0.0015,  0.0015,   0.0015,    0.002,     0.003,    0.003]
   # LEARNING_RATES: [0.0015,  0.0015,   0.0005,    0.0003,     0.0003,    0.0002]

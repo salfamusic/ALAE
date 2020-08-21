@@ -42,26 +42,37 @@ def train(cfg, logger, local_rank, world_size, distributed):
     model = Model(
         generator=cfg.MODEL.GENERATOR,
         encoder=cfg.MODEL.ENCODER,
-        ecog_encoder=cfg.MODEL.MAPPING_FROM_ECOG,
+        ecog_encoder_name=cfg.MODEL.MAPPING_FROM_ECOG,
         spec_chans = cfg.DATASET.SPEC_CHANS,
         n_formants = cfg.MODEL.N_FORMANTS,
         with_ecog = cfg.MODEL.ECOG,
+        hidden_dim=cfg.MODEL.TRANSFORMER.HIDDEN_DIM,
+        dim_feedforward=cfg.MODEL.TRANSFORMER.DIM_FEEDFORWARD,
+        encoder_only=cfg.MODEL.TRANSFORMER.ENCODER_ONLY,
+        attentional_mask=cfg.MODEL.TRANSFORMER.ATTENTIONAL_MASK,
+        n_heads = cfg.MODEL.TRANSFORMER.N_HEADS,
+        non_local = cfg.MODEL.TRANSFORMER.NON_LOCAL,
     )
     model.cuda(local_rank)
     model.train()
 
-    if local_rank == 0:
-        model_s = Model(
-            generator=cfg.MODEL.GENERATOR,
-            encoder=cfg.MODEL.ENCODER,
-            ecog_encoder=cfg.MODEL.MAPPING_FROM_ECOG,
-            spec_chans = cfg.DATASET.SPEC_CHANS,
-            n_formants = cfg.MODEL.N_FORMANTS,
-            with_ecog = cfg.MODEL.ECOG,
-        )
-        model_s.cuda(local_rank)
-        model_s.eval()
-        model_s.requires_grad_(False)
+    model_s = Model(
+        generator=cfg.MODEL.GENERATOR,
+        encoder=cfg.MODEL.ENCODER,
+        ecog_encoder_name=cfg.MODEL.MAPPING_FROM_ECOG,
+        spec_chans = cfg.DATASET.SPEC_CHANS,
+        n_formants = cfg.MODEL.N_FORMANTS,
+        with_ecog = cfg.MODEL.ECOG,
+        hidden_dim=cfg.MODEL.TRANSFORMER.HIDDEN_DIM,
+        dim_feedforward=cfg.MODEL.TRANSFORMER.DIM_FEEDFORWARD,
+        encoder_only=cfg.MODEL.TRANSFORMER.ENCODER_ONLY,
+        attentional_mask=cfg.MODEL.TRANSFORMER.ATTENTIONAL_MASK,
+        n_heads = cfg.MODEL.TRANSFORMER.N_HEADS,
+        non_local = cfg.MODEL.TRANSFORMER.NON_LOCAL,
+    )
+    model_s.cuda(local_rank)
+    model_s.eval()
+    model_s.requires_grad_(False)
     # print(model)
     if distributed:
         model = nn.parallel.DistributedDataParallel(
@@ -73,7 +84,7 @@ def train(cfg, logger, local_rank, world_size, distributed):
         model.device_ids = None
         decoder = model.module.decoder
         encoder = model.module.encoder
-        if hasattr(model,'ecog_encoder'):
+        if hasattr(model.module,'ecog_encoder'):
             ecog_encoder = model.module.ecog_encoder
     else:
         decoder = model.decoder
@@ -141,7 +152,7 @@ def train(cfg, logger, local_rank, world_size, distributed):
                                 save=local_rank == 0)
 
     # extra_checkpoint_data = checkpointer.load(ignore_last_checkpoint=False,ignore_auxiliary=True,file_name='./training_artifacts/ecog_residual_cycle/model_tmp_lod4.pth')
-    extra_checkpoint_data = checkpointer.load(ignore_last_checkpoint=True,ignore_auxiliary=cfg.FINETUNE.FINETUNE,file_name='./training_artifacts/formantsyth_NY742/model_epoch29.pth')
+    extra_checkpoint_data = checkpointer.load(ignore_last_checkpoint=True,ignore_auxiliary=cfg.FINETUNE.FINETUNE,file_name='./training_artifacts/formantsyth_NY742_constraintonFB_Bconstrainrefined_absfreq/model_epoch29.pth')
     logger.info("Starting from epoch: %d" % (scheduler.start_epoch()))
 
     arguments.update(extra_checkpoint_data)
@@ -179,9 +190,11 @@ def train(cfg, logger, local_rank, world_size, distributed):
         if cfg.MODEL.ECOG:
             ecog_test = [sample_dict_test['ecog_re_batch_all'][i].to('cuda').float() for i in range(len(sample_dict_test['ecog_re_batch_all']))]
             mask_prior_test = [sample_dict_test['mask_all'][i].to('cuda').float() for i in range(len(sample_dict_test['mask_all']))]
+            mni_coordinate_test = sample_dict_test['mni_coordinate_all'].to('cuda').float()
         else:
             ecog_test = None
             mask_prior_test = None
+            mni_coordinate_test = None
         # sample = next(make_dataloader(cfg, logger, dataset, 32, local_rank))
         # sample = (sample / 127.5 - 1.)
 
@@ -205,10 +218,11 @@ def train(cfg, logger, local_rank, world_size, distributed):
             if cfg.MODEL.ECOG:
                 ecog = [sample_dict_train['ecog_re_batch_all'][j].to('cuda').float() for j in range(len(sample_dict_train['ecog_re_batch_all']))]
                 mask_prior = [sample_dict_train['mask_all'][j].to('cuda').float() for j in range(len(sample_dict_train['mask_all']))]
+                mni_coordinate = sample_dict_train['mni_coordinate_all'].to('cuda').float()
             else:
                 ecog = None
                 mask_prior = None
-
+                mni_coordinate = None
             x = x_orig
             # x.requires_grad = True
             # apply_cycle = cfg.MODEL.CYCLE and True
@@ -218,27 +232,31 @@ def train(cfg, logger, local_rank, world_size, distributed):
             # apply_ppl_d = cfg.MODEL.APPLY_PPL_D and True
             # apply_encoder_guide = (cfg.FINETUNE.ENCODER_GUIDE or cfg.MODEL.W_SUP) and True
             # apply_sup = cfg.FINETUNE.SPECSUP
-
+            
+            
             if (cfg.MODEL.ECOG):
                 optimizer.zero_grad()
-                Lrec = model(x, ecog=ecog, mask_prior=mask_prior, on_stage = on_stage, ae = False, tracker = tracker, encoder_guide=cfg.MODEL.W_SUP)
+                Lrec = model(x, ecog=ecog, mask_prior=mask_prior, on_stage = on_stage, ae = False, tracker = tracker, encoder_guide=cfg.MODEL.W_SUP,mni=mni_coordinate)
                 (Lrec).backward()
                 optimizer.step()
             else:
                 optimizer.zero_grad()
-                Lrec = model(x, ecog=None, mask_prior=None, on_stage = None, ae = True, tracker = tracker, encoder_guide=cfg.MODEL.W_SUP)
+                Lrec = model(x, ecog=None, mask_prior=None, on_stage = None, ae = True, tracker = tracker, encoder_guide=cfg.MODEL.W_SUP,mni=mni_coordinate)
                 (Lrec).backward()
                 optimizer.step()
 
+            betta = 0.5 ** (cfg.TRAIN.BATCH_SIZE / (10 * 1000.0))
+            model_s.lerp(model, betta,w_classifier = cfg.MODEL.W_CLASSIFIER)
 
             epoch_end_time = time.time()
             per_epoch_ptime = epoch_end_time - epoch_start_time
 
 
         if local_rank == 0:
+            print(3*torch.sigmoid(model.encoder.formant_bandwitdh_ratio))
             checkpointer.save("model_epoch%d" % epoch)
-            save_sample(sample_spec_test,ecog_test,mask_prior_test,encoder,decoder,ecog_encoder=ecog_encoder if cfg.MODEL.ECOG else None,epoch=epoch,mode='test',path=cfg.OUTPUT_DIR,tracker = tracker)
-            save_sample(x,ecog,mask_prior,encoder,decoder,ecog_encoder=ecog_encoder if cfg.MODEL.ECOG else None,epoch=epoch,mode='train',path=cfg.OUTPUT_DIR,tracker = tracker)
+            save_sample(sample_spec_test,ecog_test,mask_prior_test,mni_coordinate_test,encoder,decoder,ecog_encoder if cfg.MODEL.ECOG else None,epoch=epoch,mode='test',path=cfg.OUTPUT_DIR,tracker = tracker)
+            save_sample(x,ecog,mask_prior,mni_coordinate_test,encoder,decoder,ecog_encoder if cfg.MODEL.ECOG else None,epoch=epoch,mode='train',path=cfg.OUTPUT_DIR,tracker = tracker)
 
 
 if __name__ == "__main__":

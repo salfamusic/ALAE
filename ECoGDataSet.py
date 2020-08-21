@@ -106,9 +106,10 @@ class ECoGDataset(Dataset):
                 region_ind = np.delete(np.arange(regions.shape[0]),region_ind)
             region_ind = region_ind.astype(np.int64)
             return ecog[:,region_ind],regions[region_ind],mask[region_ind],mni_coord[region_ind]
-    def __init__(self, ReqSubjDict, mode = 'train', train_param = None,BCTS=None):
+    def __init__(self, ReqSubjDict, mode = 'train', train_param = None,BCTS=None,world_size=1):
         """ ReqSubjDict can be a list of multiple subjects"""
         super(ECoGDataset, self).__init__()
+        self.world_size = world_size
         self.current_lod=2
         self.ReqSubjDict = ReqSubjDict
         self.mode = mode
@@ -135,9 +136,9 @@ class ECoGDataset(Dataset):
         [self.SelectRegion.extend(self.cortex[area]) for area in train_param["SelectRegion"]]
         self.BlockRegion = []
         [self.BlockRegion.extend(self.cortex[area]) for area in train_param["BlockRegion"]]
-        self.Prod,self.UseGridOnly,self.ReshapeAsGrid,self.SeqLen = train_param['Prod'],\
+        self.ReshapeAsGrid = False if 'Transformer' in cfg.MODEL.MAPPING_FROM_ECOG else True
+        self.Prod,self.UseGridOnly,self.SeqLen = train_param['Prod'],\
                                                                     train_param['UseGridOnly'],\
-                                                                    train_param['ReshapeAsGrid'],\
                                                                     train_param['SeqLen'],
         self.ahead_onset_test = train_param['Test']['ahead_onset']
         self.ahead_onset_train = train_param['Train']['ahead_onset']
@@ -638,7 +639,7 @@ class ECoGDataset(Dataset):
     def __len__(self):
         if self.mode == 'train':
             if self.Prod:
-                return np.array([start_ind_re_alldataset.shape[0]*128 for start_ind_re_alldataset in self.meta_data['start_ind_re_alldataset']]).sum()
+                return np.array([start_ind_re_alldataset.shape[0]*128//self.world_size for start_ind_re_alldataset in self.meta_data['start_ind_re_alldataset']]).sum()
             else:
                 return np.array([start_ind_alldataset.shape[0]*128 for start_ind_alldataset in self.meta_data['start_ind_alldataset']]).sum()
         else:
