@@ -429,7 +429,8 @@ class ECoGDataset(Dataset):
                 wave_+=[wavearray]
 
                 if self.Prod:
-                    spkr_redata = h5py.File(os.path.join(datapath_task,'TFzoom'+str(self.SpecBands)+'_denoise_16k.mat'),'r')
+                    spkr_redata = h5py.File(os.path.join(datapath_task,'TFzoom'+str(self.SpecBands)+'_denoise_16k_wide.mat'),'r')
+                    # spkr_redata = h5py.File(os.path.join(datapath_task,'TFzoom'+str(self.SpecBands)+'_denoise_16k.mat'),'r')
                     # spkr_redata = h5py.File(os.path.join(datapath_task,'TFzoom'+str(self.SpecBands)+'_16k.mat'),'r')
                     spkr_re = np.asarray(spkr_redata['TFlog'])
                     spkr_re = signal.resample(spkr_re,int(1.0*spkr_re.shape[0]/self.ORG_TF_FS*self.DOWN_TF_FS),axis=0)

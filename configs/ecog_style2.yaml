@@ -21,7 +21,7 @@ DATASET:
   SUBJECT: ['NY742']
 MODEL:
   #####TAKE OFF CHECKLIST!!!########
-  N_FORMANTS: 2
+  N_FORMANTS: 3
   LESS_TEMPORAL_FEATURE: True
   LATENT_SPACE_SIZE: 128
   LAYER_COUNT: 6
@@ -66,7 +66,7 @@ MODEL:
     NON_LOCAL: True
   # ATTENTION: []
 # OUTPUT_DIR: training_artifacts/debug
-OUTPUT_DIR: training_artifacts/formantsyth_NY742_constraintonFB_Bconstrainrefined_absfreq
+OUTPUT_DIR: training_artifacts/formantsythv2wide_NY742_constraintonFB_Bconstrainrefined_absfreq_3formants
 # OUTPUT_DIR: training_artifacts/ecog_residual_latent128_temporal_lesstemporalfeature_noprogressive_HBw_ppl_ppld_localreg_ecogf_w_spec_sup
 # OUTPUT_DIR: training_artifacts/ecog_residual_latent128_temporal_lesstemporalfeature_ppl_ppld
 # OUTPUT_DIR: training_artifacts/ecog_residual_cycle_attention3264wStyleIN_specchan64_more_attentfeatures_heads4

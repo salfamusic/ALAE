@@ -53,14 +53,33 @@ class Model(nn.Module):
     def forward(self, spec, ecog, mask_prior, on_stage, ae, tracker, encoder_guide, mni=None):
         if ae:
             self.encoder.requires_grad_(True)
-            rec = self.generate_fromspec(spec)
+            # rec = self.generate_fromspec(spec)
+            components = self.encoder(spec)
+
+            rec = self.decoder.forward(components)
             Lae = torch.mean((rec - spec).abs())
+            if components['freq_formants_hamon'].shape[1] > 1:
+                for formant in range(components['freq_formants_hamon'].shape[1]-1,0,-1):
+                    components_copy = components
+                    components_copy['freq_formants_hamon'] = components['freq_formants_hamon'][:,:formant]
+                    components_copy['freq_formants_hamon_hz'] = components['freq_formants_hamon_hz'][:,:formant]
+                    components_copy['bandwidth_formants_hamon'] = components['bandwidth_formants_hamon'][:,:formant]
+                    components_copy['bandwidth_formants_hamon_hz'] = components['bandwidth_formants_hamon_hz'][:,:formant]
+                    components_copy['amplitude_formants_hamon'] = components['amplitude_formants_hamon'][:,:formant]
+                    rec = self.decoder.forward(components_copy)
+                    Lae += torch.mean((rec - spec).abs())
             tracker.update(dict(Lae=Lae))
-            return Lae
+
+            from net_formant import mel_scale
+            thres = mel_scale(self.spec_chans,4000,pt=False).astype(np.int32)
+            explosive=torch.sign(torch.mean(spec[...,thres:],dim=-1)-torch.mean(spec[...,:thres],dim=-1))*0.5+0.5
+            Lexp = torch.mean((components['amplitudes'][:,0:1]-components['amplitudes'][:,1:2])*explosive)
+            return Lae + Lexp
         else:
             self.encoder.requires_grad_(False)
             rec,components_ecog = self.generate_fromecog(ecog,mask_prior,mni=mni,return_components=True)
-            Lrec = torch.mean((rec - spec).abs())
+            Lrec = torch.mean((rec - spec)**2)
+            # Lrec = torch.mean((rec - spec).abs())
             tracker.update(dict(Lrec=Lrec))
             Lcomp = 0
             if encoder_guide:

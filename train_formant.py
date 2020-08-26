@@ -152,10 +152,11 @@ def train(cfg, logger, local_rank, world_size, distributed):
                                 save=local_rank == 0)
 
     # extra_checkpoint_data = checkpointer.load(ignore_last_checkpoint=False,ignore_auxiliary=True,file_name='./training_artifacts/ecog_residual_cycle/model_tmp_lod4.pth')
-    extra_checkpoint_data = checkpointer.load(ignore_last_checkpoint=True,ignore_auxiliary=cfg.FINETUNE.FINETUNE,file_name='./training_artifacts/formantsyth_NY742_constraintonFB_Bconstrainrefined_absfreq/model_epoch29.pth')
+    extra_checkpoint_data = checkpointer.load(ignore_last_checkpoint=True,ignore_auxiliary=cfg.FINETUNE.FINETUNE,file_name='./training_artifacts/formantsythv2wide_NY742_constraintonFB_Bconstrainrefined_absfreq_3formants/model_epoch1.pth')
     logger.info("Starting from epoch: %d" % (scheduler.start_epoch()))
 
     arguments.update(extra_checkpoint_data)
+
 
     with open('train_param.json','r') as rfile:
         param = json.load(rfile)
@@ -187,6 +188,7 @@ def train(cfg, logger, local_rank, world_size, distributed):
         sample_dict_test = next(iter(dataset_test.iterator))
         # sample_dict_test = concate_batch(sample_dict_test)
         sample_spec_test = sample_dict_test['spkr_re_batch_all'].to('cuda').float()
+        sample_label_test = sample_dict_test['label_batch_all']
         if cfg.MODEL.ECOG:
             ecog_test = [sample_dict_test['ecog_re_batch_all'][i].to('cuda').float() for i in range(len(sample_dict_test['ecog_re_batch_all']))]
             mask_prior_test = [sample_dict_test['mask_all'][i].to('cuda').float() for i in range(len(sample_dict_test['mask_all']))]
@@ -215,6 +217,7 @@ def train(cfg, logger, local_rank, world_size, distributed):
             # import pdb;pdb.set_trace()
             words = sample_dict_train['word_batch_all'].to('cuda').long()
             words = words.view(words.shape[0]*words.shape[1])
+            labels = sample_dict_train['label_batch_all']
             if cfg.MODEL.ECOG:
                 ecog = [sample_dict_train['ecog_re_batch_all'][j].to('cuda').float() for j in range(len(sample_dict_train['ecog_re_batch_all']))]
                 mask_prior = [sample_dict_train['mask_all'][j].to('cuda').float() for j in range(len(sample_dict_train['mask_all']))]
@@ -255,8 +258,8 @@ def train(cfg, logger, local_rank, world_size, distributed):
         if local_rank == 0:
             print(3*torch.sigmoid(model.encoder.formant_bandwitdh_ratio))
             checkpointer.save("model_epoch%d" % epoch)
-            save_sample(sample_spec_test,ecog_test,mask_prior_test,mni_coordinate_test,encoder,decoder,ecog_encoder if cfg.MODEL.ECOG else None,epoch=epoch,mode='test',path=cfg.OUTPUT_DIR,tracker = tracker)
-            save_sample(x,ecog,mask_prior,mni_coordinate_test,encoder,decoder,ecog_encoder if cfg.MODEL.ECOG else None,epoch=epoch,mode='train',path=cfg.OUTPUT_DIR,tracker = tracker)
+            save_sample(sample_spec_test,ecog_test,mask_prior_test,mni_coordinate_test,encoder,decoder,ecog_encoder if cfg.MODEL.ECOG else None,epoch=epoch,label=sample_label_test,mode='test',path=cfg.OUTPUT_DIR,tracker = tracker)
+            save_sample(x,ecog,mask_prior,mni_coordinate,encoder,decoder,ecog_encoder if cfg.MODEL.ECOG else None,epoch=epoch,label=labels,mode='train',path=cfg.OUTPUT_DIR,tracker = tracker)
 
 
 if __name__ == "__main__":
